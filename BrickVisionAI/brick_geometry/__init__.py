@@ -1,5 +1,5 @@
 """
-brick_geometry — LEGO Geometry Engine (Phase A)
+brick_geometry — LEGO Geometry Engine (Phase A–C)
 
 Quick-start
 -----------
@@ -58,6 +58,18 @@ from .assembly import (
     PlacementEngine, PlacementSuggestion,
 )
 
+# io (Phase C)
+from .io import (
+    LDrawReader, LDrawRecord, LDrawParseResult,
+    LDrawWriter,
+    SceneExporter,
+)
+
+# analysis (Phase C)
+from .analysis import (
+    StabilityAnalyzer, StabilityReport, NodeStatus,
+)
+
 # utilities
 from .utils import (
     approx_equal, clamp, lerp,
@@ -65,7 +77,7 @@ from .utils import (
     validated,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # core
@@ -96,6 +108,12 @@ __all__ = [
     # assembly
     "AssemblyNode", "Assembly", "ValidationReport",
     "PlacementEngine", "PlacementSuggestion",
+    # io (Phase C)
+    "LDrawReader", "LDrawRecord", "LDrawParseResult",
+    "LDrawWriter",
+    "SceneExporter",
+    # analysis (Phase C)
+    "StabilityAnalyzer", "StabilityReport", "NodeStatus",
     # utils
     "approx_equal", "clamp", "lerp",
     "snap_to_grid", "snap_to_90", "validated",
