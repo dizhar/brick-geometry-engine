@@ -1,0 +1,5 @@
+# BrickVisionAI — LEGO Geometry Engine
+# Runtime dependencies: none (stdlib only)
+
+# Development / testing
+pytest>=8.0
