@@ -15,7 +15,22 @@
       "Bash(python -m pytest BrickVisionAI/ -q --co 2>&1 | grep \"test_convex\\\\|test_slope\\\\|test_technic\" | wc -l)",
       "Bash(python -m pytest tests/ -x -q 2>&1 | head -80)",
       "Bash(python -m pytest tests/ -x -q 2>&1 | tail -20)",
-      "Bash(python -m pytest tests/test_io/test_ldraw_writer.py -q -vv 2>&1 | grep -A 30 \"FAILED\\\\|AssertionError\" | head -60)"
+      "Bash(python -m pytest tests/test_io/test_ldraw_writer.py -q -vv 2>&1 | grep -A 30 \"FAILED\\\\|AssertionError\" | head -60)",
+      "Bash(pip show pytest 2>&1 | head -3 && python -c \"import pytest; print\\('pytest', pytest.__version__\\)\" 2>&1)",
+      "Bash(pip install -e . -q && python -c \"import brick_geometry; print\\('install OK, version:', brick_geometry.__version__\\)\")",
+      "Bash(pip show brick-geometry 2>&1)",
+      "Bash(python -m pytest tests/ -q --tb=no 2>&1)",
+      "Bash(python -c \"import brick_geometry; print\\('import OK'\\)\" 2>&1\npython -m pytest tests/ -q --tb=no 2>&1 | tail -3\npython examples/simple_tower.py 2>&1\npython examples/basic_wall.py 2>&1\npython examples/random_build.py 2>&1)",
+      "Bash(python -c \"import brick_geometry; print\\('import OK'\\)\")",
+      "Bash(python -m pytest tests/ -q --tb=no)",
+      "Bash(python examples/simple_tower.py 2>&1)",
+      "Bash(python examples/basic_wall.py 2>&1\npython examples/random_build.py 2>&1)",
+      "Bash(python -c \"import json; print\\(open\\('data/parts/bricks.json'\\).read\\(\\)[:200]\\)\"\npython -c \"import json; print\\(open\\('data/parts/schema.json'\\).read\\(\\)[:200]\\)\"\npython -c \"print\\(open\\('data/parts/plates.json'\\).read\\(\\)[:200]\\)\")",
+      "Bash(python -c \"\nimport os\nfor f in ['data/parts/bricks.json','data/parts/plates.json','data/parts/schema.json']:\n    size = os.path.getsize\\(f\\)\n    print\\(f'{f}: {size} bytes'\\)\n\")",
+      "Bash(python -c \"\nfrom brick_geometry.parts.common_parts import BRICK_2x4\nimport json\nprint\\(json.dumps\\(BRICK_2x4.to_dict\\(\\), indent=2\\)\\)\n\")",
+      "Bash(python -c \"\nfrom brick_geometry.parts.part_catalog import PartCatalog\nc = PartCatalog.default\\(\\)\nprint\\('catalog size:', len\\(c._parts\\)\\)\nprint\\('sample keys:', list\\(c._parts.keys\\(\\)\\)[:5]\\)\n\")",
+      "Bash(python -c \"\nfrom brick_geometry.parts.part_catalog import PartCatalog\nimport inspect\nsrc = inspect.getsource\\(PartCatalog\\)\nprint\\(src[:3000]\\)\n\")",
+      "Bash(git -C /workspaces/codespaces-blank remote -v)"
     ]
   }
 }
