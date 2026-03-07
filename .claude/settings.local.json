@@ -35,7 +35,11 @@
       "Bash(which python && python --version && python -c \"import pytest; print\\(pytest.__version__\\)\")",
       "Bash(pip install fastapi \"uvicorn[standard]\" sqlalchemy alembic psycopg2-binary httpx python-dotenv 2>&1 | tail -8)",
       "Bash(cd /workspaces/codespaces-blank/brick-geometry-engine && python -m pytest tests/test_api/ -v --tb=short 2>&1)",
-      "Bash(cd /workspaces/codespaces-blank/brick-geometry-engine && python -m pytest tests/ -v --tb=short 2>&1)"
+      "Bash(cd /workspaces/codespaces-blank/brick-geometry-engine && python -m pytest tests/ -v --tb=short 2>&1)",
+      "Bash(for f in /workspaces/codespaces-blank/brick-geometry-engine/docs/*.md)",
+      "Bash(do echo \"=== $f ===\")",
+      "Read(//workspaces/codespaces-blank/brick-geometry-engine/**)",
+      "Bash(done)"
     ]
   }
 }
