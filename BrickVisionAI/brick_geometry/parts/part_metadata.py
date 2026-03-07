@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Optional
+from typing import List, Optional, Tuple
 from pathlib import Path
 
 from ..core.constants import (
@@ -30,10 +30,60 @@ class PartCategory(Enum):
     BRICK = auto()      # full-height brick (3 plates tall)
     PLATE = auto()      # 1-plate-tall flat part
     TILE = auto()       # plate with no studs on top
-    SLOPE = auto()      # angled surface  (Phase B+)
-    TECHNIC = auto()    # Technic beam / pin parts  (Phase B+)
+    SLOPE = auto()      # angled surface
+    TECHNIC = auto()    # Technic beam / brick with axle holes
     OTHER = auto()
 
+
+# ---------------------------------------------------------------------------
+# SlopeGeometry  (Phase B)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SlopeGeometry:
+    """
+    Additional geometry descriptor for SLOPE category parts.
+
+    The slope body is a trapezoidal prism that rises along the Z axis:
+      - At z = 0 (front / low end): height = height_low_ldu
+      - At z = depth (back / high end): height = height_high_ldu
+
+    height_high_ldu must equal the part's PartDimensions.height_ldu so that
+    the AABB (used for broad-phase collision) is still correct.
+
+    flat_rows_at_high_end controls how many stud *rows* (counting from the
+    high / back end) sit on a flat horizontal surface and therefore carry
+    regular upward-facing studs.  Set to 0 for a fully tapered slope.
+    """
+    height_low_ldu: float
+    height_high_ldu: float
+    flat_rows_at_high_end: int = 1
+
+    @property
+    def delta_height_ldu(self) -> float:
+        return self.height_high_ldu - self.height_low_ldu
+
+
+# ---------------------------------------------------------------------------
+# TechnicGeometry  (Phase B)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class TechnicGeometry:
+    """
+    Additional geometry descriptor for TECHNIC category parts.
+
+    hole_positions: stud-grid (col, row) coordinates of each axle hole.
+    hole_axis:      'x' — holes run parallel to the X axis (default for
+                    beams oriented along Z); 'z' — holes run along Z.
+    """
+    hole_positions: Tuple[Tuple[int, int], ...]
+    hole_axis: str = "x"   # 'x' or 'z'
+
+
+# ---------------------------------------------------------------------------
+# HeightUnit
+# ---------------------------------------------------------------------------
 
 class HeightUnit(Enum):
     """Canonical vertical unit used to specify a part's height."""
@@ -118,6 +168,8 @@ class PartMetadata:
     dimensions: PartDimensions
     mesh_path: Optional[str] = None
     ldraw_id: Optional[str] = None
+    slope_geometry: Optional[SlopeGeometry] = None      # Phase B: set for SLOPE parts
+    technic_geometry: Optional[TechnicGeometry] = None  # Phase B: set for TECHNIC parts
 
     # --- derived helpers ---
 
@@ -132,7 +184,7 @@ class PartMetadata:
     # --- serialisation ---
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "part_id": self.part_id,
             "name": self.name,
             "category": self.category.name,
@@ -142,9 +194,38 @@ class PartMetadata:
             "mesh_path": self.mesh_path,
             "ldraw_id": self.ldraw_id,
         }
+        if self.slope_geometry is not None:
+            sg = self.slope_geometry
+            d["slope_geometry"] = {
+                "height_low_ldu": sg.height_low_ldu,
+                "height_high_ldu": sg.height_high_ldu,
+                "flat_rows_at_high_end": sg.flat_rows_at_high_end,
+            }
+        if self.technic_geometry is not None:
+            tg = self.technic_geometry
+            d["technic_geometry"] = {
+                "hole_positions": list(tg.hole_positions),
+                "hole_axis": tg.hole_axis,
+            }
+        return d
 
     @staticmethod
     def from_dict(data: dict) -> PartMetadata:
+        slope_geometry: Optional[SlopeGeometry] = None
+        if "slope_geometry" in data:
+            sg = data["slope_geometry"]
+            slope_geometry = SlopeGeometry(
+                height_low_ldu=sg["height_low_ldu"],
+                height_high_ldu=sg["height_high_ldu"],
+                flat_rows_at_high_end=sg.get("flat_rows_at_high_end", 1),
+            )
+        technic_geometry: Optional[TechnicGeometry] = None
+        if "technic_geometry" in data:
+            tg = data["technic_geometry"]
+            technic_geometry = TechnicGeometry(
+                hole_positions=tuple(tuple(p) for p in tg["hole_positions"]),
+                hole_axis=tg.get("hole_axis", "x"),
+            )
         return PartMetadata(
             part_id=data["part_id"],
             name=data["name"],
@@ -156,6 +237,8 @@ class PartMetadata:
             ),
             mesh_path=data.get("mesh_path"),
             ldraw_id=data.get("ldraw_id"),
+            slope_geometry=slope_geometry,
+            technic_geometry=technic_geometry,
         )
 
     @staticmethod
@@ -215,6 +298,87 @@ def make_plate(
             studs_x=studs_x,
             studs_z=studs_z,
             height_ldu=float(PLATE_HEIGHT_LDU),
+        ),
+        ldraw_id=ldraw_id,
+    )
+
+
+def make_slope(
+    part_id: str,
+    name: str,
+    studs_x: int,
+    studs_z: int,
+    height_low_ldu: float,
+    height_high_ldu: float,
+    flat_rows_at_high_end: int = 1,
+    ldraw_id: Optional[str] = None,
+) -> PartMetadata:
+    """
+    Create a slope part.
+
+    The slope body rises from *height_low_ldu* at its front (z=0 in local
+    space) to *height_high_ldu* at its back (z = studs_z × STUD_SPACING).
+    The AABB height is set to *height_high_ldu* (the tallest extent).
+
+    *flat_rows_at_high_end* controls how many stud rows at the high end
+    carry normal upward-facing studs (default 1).  Set to 0 for a fully
+    tapered wedge with no top studs.
+    """
+    return PartMetadata(
+        part_id=part_id,
+        name=name,
+        category=PartCategory.SLOPE,
+        dimensions=PartDimensions(
+            studs_x=studs_x,
+            studs_z=studs_z,
+            height_ldu=float(height_high_ldu),
+        ),
+        slope_geometry=SlopeGeometry(
+            height_low_ldu=float(height_low_ldu),
+            height_high_ldu=float(height_high_ldu),
+            flat_rows_at_high_end=flat_rows_at_high_end,
+        ),
+        ldraw_id=ldraw_id,
+    )
+
+
+def make_technic_brick(
+    part_id: str,
+    name: str,
+    studs_x: int,
+    studs_z: int,
+    hole_positions: Optional[List[Tuple[int, int]]] = None,
+    hole_axis: str = "x",
+    ldraw_id: Optional[str] = None,
+) -> PartMetadata:
+    """
+    Create a Technic brick (full-height, 24 LDU) with axle holes.
+
+    *hole_positions* is a list of (col, row) stud-grid coordinates where
+    axle holes are present.  When None, holes are placed at every stud
+    position (i.e., a fully perforated beam).
+
+    *hole_axis* is the axis the holes run along: 'x' (default, holes accept
+    pins/axles from ±X) or 'z'.
+    """
+    if hole_positions is None:
+        hole_positions = [
+            (col, row)
+            for col in range(studs_x)
+            for row in range(studs_z)
+        ]
+    return PartMetadata(
+        part_id=part_id,
+        name=name,
+        category=PartCategory.TECHNIC,
+        dimensions=PartDimensions(
+            studs_x=studs_x,
+            studs_z=studs_z,
+            height_ldu=float(BRICK_HEIGHT_LDU),
+        ),
+        technic_geometry=TechnicGeometry(
+            hole_positions=tuple((c, r) for c, r in hole_positions),
+            hole_axis=hole_axis,
         ),
         ldraw_id=ldraw_id,
     )

@@ -17,64 +17,67 @@ from typing import Dict, List, Optional, Set
 from ..core.geometry import Point3D, Vector3D
 from ..core.transforms import Pose
 from ..core.constants import STUD_SPACING_LDU, PLATE_HEIGHT_LDU, BRICK_HEIGHT_LDU
-from ..parts.part_metadata import PartMetadata
+from ..parts.part_metadata import PartCategory, PartMetadata
 from ..connectors.connector_model import Connector, ConnectorPair, ConnectorType
+from ..connectors.connector_generation import (
+    generate_slope_connectors,
+    generate_technic_connectors,
+)
 
 
 # ---------------------------------------------------------------------------
-# Connector generation helpers
+# Standard connector generation (BRICK / PLATE / TILE / OTHER)
 # ---------------------------------------------------------------------------
 
-def _stud_normal() -> Vector3D:
-    return Vector3D(0.0, 1.0, 0.0)
-
-
-def _anti_stud_normal() -> Vector3D:
-    return Vector3D(0.0, -1.0, 0.0)
-
-
-def generate_connectors(part: PartMetadata, pose: Pose) -> List[Connector]:
-    """
-    Generate world-space connectors for *part* placed at *pose*.
-
-    Studs occupy the top face; anti-studs the bottom face.
-    Positions are computed on the stud grid centred within the part footprint.
-
-    Grid layout (local space):
-        x offsets = [STUD_SPACING/2, 3*STUD_SPACING/2, ...]  for studs_x columns
-        z offsets = [STUD_SPACING/2, 3*STUD_SPACING/2, ...]  for studs_z rows
-    """
+def _generate_standard_connectors(part: PartMetadata, pose: Pose) -> List[Connector]:
+    """Studs on top face, anti-studs on bottom face — all grid positions."""
     dims = part.dimensions
     connectors: List[Connector] = []
+    stud_n = Vector3D(0.0, 1.0, 0.0)
+    anti_n = Vector3D(0.0, -1.0, 0.0)
 
     for col in range(dims.studs_x):
         for row in range(dims.studs_z):
             local_x = (col + 0.5) * STUD_SPACING_LDU
             local_z = (row + 0.5) * STUD_SPACING_LDU
 
-            # --- stud (top face) ---
             stud_local = Point3D(local_x, dims.height_ldu, local_z)
-            stud_world = pose.transform_point(stud_local)
-            stud_normal_world = pose.transform_vector(_stud_normal())
             connectors.append(Connector(
                 connector_id=f"stud_{col}_{row}",
                 connector_type=ConnectorType.STUD,
-                position=stud_world,
-                normal=stud_normal_world,
+                position=pose.transform_point(stud_local),
+                normal=pose.transform_vector(stud_n),
             ))
 
-            # --- anti-stud (bottom face) ---
             anti_local = Point3D(local_x, 0.0, local_z)
-            anti_world = pose.transform_point(anti_local)
-            anti_normal_world = pose.transform_vector(_anti_stud_normal())
             connectors.append(Connector(
                 connector_id=f"anti_stud_{col}_{row}",
                 connector_type=ConnectorType.ANTI_STUD,
-                position=anti_world,
-                normal=anti_normal_world,
+                position=pose.transform_point(anti_local),
+                normal=pose.transform_vector(anti_n),
             ))
 
     return connectors
+
+
+def generate_connectors(part: PartMetadata, pose: Pose) -> List[Connector]:
+    """
+    Generate world-space connectors for *part* placed at *pose*.
+
+    Dispatches to the appropriate generator based on part category:
+    - SLOPE   → generate_slope_connectors   (Phase B)
+    - TECHNIC → generate_technic_connectors (Phase B)
+    - All others → standard studs + anti-studs on a full grid
+
+    Grid layout in local space (X, Z axes):
+        col offset = (col + 0.5) × STUD_SPACING_LDU
+        row offset = (row + 0.5) × STUD_SPACING_LDU
+    """
+    if part.category == PartCategory.SLOPE:
+        return generate_slope_connectors(part, pose)
+    if part.category == PartCategory.TECHNIC:
+        return generate_technic_connectors(part, pose)
+    return _generate_standard_connectors(part, pose)
 
 
 # ---------------------------------------------------------------------------

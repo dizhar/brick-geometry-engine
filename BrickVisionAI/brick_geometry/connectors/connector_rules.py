@@ -1,14 +1,21 @@
 """
 Connection rules and validation for the LEGO geometry engine.
 
-Phase A rules
--------------
+Phase A rules (STUD ↔ ANTI_STUD)
+---------------------------------
 1. Only STUD ↔ ANTI_STUD pairings are legal.
-2. The connectors must be spatially aligned:
-   - Their mating points must be within POSITION_TOLERANCE_LDU of each other.
-3. Their normals must be anti-parallel (dot product ≈ −1):
-   - A stud's normal (+Y) must point directly into the anti-stud's normal (−Y).
+2. Connector positions must be within CONNECTION_POSITION_TOLERANCE.
+3. Normals must be anti-parallel (dot ≈ −1): stud points +Y, anti-stud −Y.
 4. Both connectors must be FREE.
+
+Phase B additions (Technic connectors)
+---------------------------------------
+TECHNIC_PIN  ↔ TECHNIC_HOLE
+TECHNIC_AXLE ↔ TECHNIC_AXLE_HOLE
+
+Rules are identical except the *normal orientation* check uses parallel
+normals (|dot| ≈ 1) rather than anti-parallel: both connectors' normals
+point along the shared axle axis.
 
 All validation methods return a ValidationResult so callers can surface
 meaningful error messages without catching exceptions.
@@ -53,18 +60,32 @@ def _fail(reason: str) -> ValidationResult:
 # Compatibility matrix
 # ---------------------------------------------------------------------------
 
-# Maps (connector_type_a, connector_type_b) → True if the pairing is legal.
-# Phase A: only STUD ↔ ANTI_STUD.
-_COMPATIBILITY: dict[tuple[ConnectorType, ConnectorType], bool] = {
-    (ConnectorType.STUD, ConnectorType.ANTI_STUD): True,
-    (ConnectorType.ANTI_STUD, ConnectorType.STUD): True,
-    (ConnectorType.STUD, ConnectorType.STUD): False,
-    (ConnectorType.ANTI_STUD, ConnectorType.ANTI_STUD): False,
-}
+# ---------------------------------------------------------------------------
+# Connector family helpers
+# ---------------------------------------------------------------------------
+
+_TECHNIC_TYPES = frozenset({
+    ConnectorType.TECHNIC_PIN,
+    ConnectorType.TECHNIC_HOLE,
+    ConnectorType.TECHNIC_AXLE,
+    ConnectorType.TECHNIC_AXLE_HOLE,
+})
+
+# Legal mating pairs (order-insensitive — both orderings stored for O(1) lookup)
+_COMPATIBLE_PAIRS: frozenset[frozenset[ConnectorType]] = frozenset({
+    frozenset({ConnectorType.STUD,         ConnectorType.ANTI_STUD}),
+    frozenset({ConnectorType.TECHNIC_PIN,  ConnectorType.TECHNIC_HOLE}),
+    frozenset({ConnectorType.TECHNIC_AXLE, ConnectorType.TECHNIC_AXLE_HOLE}),
+})
 
 
 def types_are_compatible(a: ConnectorType, b: ConnectorType) -> bool:
-    return _COMPATIBILITY.get((a, b), False)
+    return frozenset({a, b}) in _COMPATIBLE_PAIRS
+
+
+def _is_technic_pair(a: ConnectorType, b: ConnectorType) -> bool:
+    """Return True if both connector types belong to the Technic family."""
+    return a in _TECHNIC_TYPES and b in _TECHNIC_TYPES
 
 
 # ---------------------------------------------------------------------------
@@ -159,11 +180,28 @@ class ConnectionRules:
         b_world_normal: Optional[Vector3D] = None,
     ) -> ValidationResult:
         """
-        Verify that the normals are anti-parallel (pointing toward each other).
+        Verify connector normal orientation.
+
+        - STUD ↔ ANTI_STUD:           normals must be anti-parallel (dot ≈ −1).
+        - Technic pairs:               normals must be co-axial (|dot| ≈ 1),
+                                       i.e., parallel or anti-parallel along the
+                                       shared hole axis.
         """
         n_a = (a_world_normal if a_world_normal is not None else a.normal).normalize()
         n_b = (b_world_normal if b_world_normal is not None else b.normal).normalize()
         dot = n_a.dot(n_b)
+
+        if _is_technic_pair(a.connector_type, b.connector_type):
+            # Allow either parallel (pin entering from this side) or
+            # anti-parallel (pin entering from opposite side).
+            if abs(dot) < self.normal_tolerance:
+                return _fail(
+                    f"Technic normals are not co-axial: |dot|={abs(dot):.4f} "
+                    f"(need ≥ {self.normal_tolerance})."
+                )
+            return _OK
+
+        # Standard stud ↔ anti-stud: must be anti-parallel
         if dot > -self.normal_tolerance:
             angle_deg = math.degrees(math.acos(max(-1.0, min(1.0, dot))))
             return _fail(
@@ -225,8 +263,9 @@ class ConnectionRules:
         if not result:
             raise ValueError(f"Cannot form connection: {result.reason}")
 
-        stud = a if a.connector_type == ConnectorType.STUD else b
-        anti = b if b.connector_type == ConnectorType.ANTI_STUD else a
+        _MALE = frozenset({ConnectorType.STUD, ConnectorType.TECHNIC_PIN, ConnectorType.TECHNIC_AXLE})
+        stud = a if a.connector_type in _MALE else b
+        anti = b if b.connector_type not in _MALE else a
         stud.occupy(anti)
         anti.occupy(stud)
         return ConnectorPair(stud=stud, anti_stud=anti)
@@ -267,8 +306,13 @@ class ConnectionRules:
         # Position score: 1 when perfectly aligned, 0 at tolerance boundary.
         pos_score = max(0.0, 1.0 - dist / self.position_tolerance)
 
-        # Orientation score: 1 when perfectly anti-parallel (dot == -1).
-        ori_score = max(0.0, (-dot - self.normal_tolerance) / (1.0 - self.normal_tolerance))
+        # Orientation score:
+        # - Anti-parallel (stud/anti-stud): 1 at dot=-1, 0 at dot=-tolerance
+        # - Co-axial (Technic): 1 at |dot|=1, 0 at |dot|=tolerance
+        if _is_technic_pair(a.connector_type, b.connector_type):
+            ori_score = max(0.0, (abs(dot) - self.normal_tolerance) / (1.0 - self.normal_tolerance))
+        else:
+            ori_score = max(0.0, (-dot - self.normal_tolerance) / (1.0 - self.normal_tolerance))
 
         return pos_score * ori_score
 

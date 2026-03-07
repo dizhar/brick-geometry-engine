@@ -30,8 +30,13 @@ from ..core.constants import (
 # ---------------------------------------------------------------------------
 
 class ConnectorType(Enum):
-    STUD = auto()       # raised cylinder on top face (male)
-    ANTI_STUD = auto()  # receiving tube on bottom face (female)
+    STUD = auto()            # raised cylinder on top face (male)
+    ANTI_STUD = auto()       # receiving tube on bottom face (female)
+    # Phase B: Technic horizontal connectors
+    TECHNIC_PIN = auto()     # cross-shaped pin tip (male, inserts into hole)
+    TECHNIC_HOLE = auto()    # round axle hole in a beam/brick (female)
+    TECHNIC_AXLE = auto()    # smooth cylindrical axle (male)
+    TECHNIC_AXLE_HOLE = auto()  # axle-shaped hole (female)
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +89,10 @@ class Connector:
         """Outer diameter of this connector in LDU."""
         if self.connector_type == ConnectorType.STUD:
             return STUD_DIAMETER_LDU
+        if self.connector_type in (ConnectorType.TECHNIC_PIN, ConnectorType.TECHNIC_HOLE):
+            return STUD_DIAMETER_LDU        # pin OD matches stud OD
+        if self.connector_type in (ConnectorType.TECHNIC_AXLE, ConnectorType.TECHNIC_AXLE_HOLE):
+            return ANTI_STUD_DIAMETER_LDU   # axle slightly narrower
         return ANTI_STUD_DIAMETER_LDU
 
     @property
@@ -92,8 +101,8 @@ class Connector:
         Protrusion height in LDU.
 
         Studs protrude by STUD_HEIGHT_LDU above the part face.
-        Anti-studs are recessed and return 0 (their depth is absorbed into
-        the part body height).
+        Technic connectors are flush (protrusion handled externally).
+        Anti-studs / holes are recessed and return 0.
         """
         if self.connector_type == ConnectorType.STUD:
             return STUD_HEIGHT_LDU
@@ -165,11 +174,21 @@ class ConnectorPair:
     stud: Connector
     anti_stud: Connector
 
+    _MALE_TYPES = frozenset({ConnectorType.STUD, ConnectorType.TECHNIC_PIN, ConnectorType.TECHNIC_AXLE})
+    _FEMALE_TYPES = frozenset({ConnectorType.ANTI_STUD, ConnectorType.TECHNIC_HOLE, ConnectorType.TECHNIC_AXLE_HOLE})
+
     def __post_init__(self) -> None:
-        if self.stud.connector_type != ConnectorType.STUD:
-            raise ValueError("'stud' field must be a STUD connector.")
-        if self.anti_stud.connector_type != ConnectorType.ANTI_STUD:
-            raise ValueError("'anti_stud' field must be an ANTI_STUD connector.")
+        if self.stud.connector_type not in ConnectorPair._MALE_TYPES:
+            raise ValueError(
+                f"'stud' field must be a male connector (STUD/TECHNIC_PIN/TECHNIC_AXLE), "
+                f"got {self.stud.connector_type.name}."
+            )
+        if self.anti_stud.connector_type not in ConnectorPair._FEMALE_TYPES:
+            raise ValueError(
+                f"'anti_stud' field must be a female connector "
+                f"(ANTI_STUD/TECHNIC_HOLE/TECHNIC_AXLE_HOLE), "
+                f"got {self.anti_stud.connector_type.name}."
+            )
 
     def __repr__(self) -> str:
         return f"ConnectorPair(stud={self.stud.connector_id!r}, anti_stud={self.anti_stud.connector_id!r})"

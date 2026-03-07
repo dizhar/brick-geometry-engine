@@ -8,7 +8,11 @@
       "Bash(cd /workspaces/codespaces-blank/BrickVisionAI && python -c \"import brick_geometry; print\\(brick_geometry.__version__\\); print\\('OK'\\)\")",
       "Bash(pip install pytest -q 2>&1 | tail -1 && python -m pytest tests/ -v --tb=short 2>&1)",
       "Bash(python -m pytest tests/ -v --tb=short 2>&1)",
-      "Bash(python -m pytest tests/ -q 2>&1)"
+      "Bash(python -m pytest tests/ -q 2>&1)",
+      "Bash(python -m pytest BrickVisionAI/ -x -q 2>&1 | head -80)",
+      "Bash(python -m pytest BrickVisionAI/ -q 2>&1 | tail -15)",
+      "Bash(python -m pytest BrickVisionAI/ -q --tb=no 2>&1 | grep \"passed\")",
+      "Bash(python -m pytest BrickVisionAI/ -q --co 2>&1 | grep \"test_convex\\\\|test_slope\\\\|test_technic\" | wc -l)"
     ]
   }
 }

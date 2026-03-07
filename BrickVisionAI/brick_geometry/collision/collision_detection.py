@@ -20,8 +20,9 @@ from typing import Dict, FrozenSet, Iterator, List, Optional, Set, Tuple
 from ..core.geometry import BoundingBox, Point3D
 from ..core.transforms import Pose
 from ..core.constants import POSITION_TOLERANCE_LDU
-from ..parts.part_metadata import PartMetadata
+from ..parts.part_metadata import PartCategory, PartMetadata
 from .bounding_box import world_box, expanded_box
+from .convex_shape import ConvexShape, box_shape_from_aabb, sat_intersect, slope_prism_shape
 
 
 # ---------------------------------------------------------------------------
@@ -55,14 +56,37 @@ class PlacedPart:
     part: PartMetadata
     pose: Pose
     _cached_box: Optional[BoundingBox] = field(default=None, repr=False)
+    _cached_shape: Optional[ConvexShape] = field(default=None, repr=False)
 
     def world_box(self) -> BoundingBox:
         if self._cached_box is None:
             self._cached_box = world_box(self.part, self.pose)
         return self._cached_box
 
+    def convex_shape(self) -> Optional[ConvexShape]:
+        """
+        Return a ConvexShape for SLOPE parts (more precise narrow phase).
+        Returns None for bricks/plates — AABB is already tight for them.
+        """
+        if self.part.category != PartCategory.SLOPE:
+            return None
+        if self._cached_shape is None:
+            sg = self.part.slope_geometry
+            dims = self.part.dimensions
+            h_lo = sg.height_low_ldu if sg is not None else 0.0
+            h_hi = dims.height_ldu
+            self._cached_shape = slope_prism_shape(
+                width_ldu=dims.width_ldu,
+                depth_ldu=dims.depth_ldu,
+                height_low_ldu=h_lo,
+                height_high_ldu=h_hi,
+                pose=self.pose,
+            )
+        return self._cached_shape
+
     def invalidate_cache(self) -> None:
         self._cached_box = None
+        self._cached_shape = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +220,13 @@ class CollisionDetector:
         Test two registered parts for collision.
 
         Returns a CollisionResult if they overlap, else None.
-        Uses the narrow-phase cache.
+
+        Narrow-phase strategy
+        ---------------------
+        - If neither part is a slope: AABB intersection (Phase A behaviour).
+        - If either part is a slope: SAT with ConvexShape (Phase B).
+          The slope's trapezoidal-prism shape eliminates false positives in
+          the empty wedge below the slope face.
         """
         if id_a == id_b:
             return None
@@ -205,13 +235,28 @@ class CollisionDetector:
         if key in self._cache:
             if not self._cache[key]:
                 return None
-            # Still need to build result — fall through.
 
-        box_a = self._parts[id_a].world_box()
-        box_b = self._parts[id_b].world_box()
-        collides = box_a.intersects(box_b)
+        pa = self._parts[id_a]
+        pb = self._parts[id_b]
+        box_a = pa.world_box()
+        box_b = pb.world_box()
+
+        # Broad-phase guard: if AABBs don't intersect, skip narrow phase.
+        if not box_a.intersects(box_b):
+            self._cache[key] = False
+            return None
+
+        # Narrow phase
+        shape_a = pa.convex_shape()
+        shape_b = pb.convex_shape()
+        if shape_a is not None or shape_b is not None:
+            cs_a = shape_a if shape_a is not None else box_shape_from_aabb(box_a)
+            cs_b = shape_b if shape_b is not None else box_shape_from_aabb(box_b)
+            collides = sat_intersect(cs_a, cs_b)
+        else:
+            collides = True  # AABBs already confirmed to intersect above
+
         self._cache[key] = collides
-
         if not collides:
             return None
         return CollisionResult(id_a=id_a, id_b=id_b, box_a=box_a, box_b=box_b)
@@ -222,23 +267,50 @@ class CollisionDetector:
         """
         Check a *candidate* part (not yet registered) against all registered
         parts.  Returns a list of collisions (empty = safe to place).
+
+        Uses SAT narrow phase when the candidate or the registered part is a
+        slope; otherwise falls back to AABB.
         """
         candidate_box = world_box(part, pose)
         broad_box = expanded_box(candidate_box, self._broad_margin)
         candidate_ids = self._grid.candidates(broad_box) - {instance_id}
 
+        # Build candidate shape only if it's a slope
+        candidate_shape: Optional[ConvexShape] = None
+        if part.category == PartCategory.SLOPE:
+            sg = part.slope_geometry
+            dims = part.dimensions
+            candidate_shape = slope_prism_shape(
+                width_ldu=dims.width_ldu,
+                depth_ldu=dims.depth_ldu,
+                height_low_ldu=sg.height_low_ldu if sg else 0.0,
+                height_high_ldu=dims.height_ldu,
+                pose=pose,
+            )
+
         results: List[CollisionResult] = []
         for other_id in candidate_ids:
-            other_box = self._parts[other_id].world_box()
-            if candidate_box.intersects(other_box):
-                results.append(
-                    CollisionResult(
-                        id_a=instance_id,
-                        id_b=other_id,
-                        box_a=candidate_box,
-                        box_b=other_box,
-                    )
-                )
+            other = self._parts[other_id]
+            other_box = other.world_box()
+
+            # Broad-phase AABB guard
+            if not candidate_box.intersects(other_box):
+                continue
+
+            # Narrow phase
+            other_shape = other.convex_shape()
+            if candidate_shape is not None or other_shape is not None:
+                cs_cand = candidate_shape if candidate_shape is not None else box_shape_from_aabb(candidate_box)
+                cs_other = other_shape if other_shape is not None else box_shape_from_aabb(other_box)
+                if not sat_intersect(cs_cand, cs_other):
+                    continue
+
+            results.append(CollisionResult(
+                id_a=instance_id,
+                id_b=other_id,
+                box_a=candidate_box,
+                box_b=other_box,
+            ))
         return results
 
     def check_all(self) -> List[CollisionResult]:
